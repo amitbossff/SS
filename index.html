@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Fast Number Detector</title>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.1/dist/tesseract.min.js"></script>
+  <style>
+    body { font-family: 'Segoe UI', sans-serif; background: #f0f0f0; padding: 15px; margin: 0; }
+    h2 { text-align: center; }
+    input[type="file"] { display: block; margin: 10px auto; }
+    #output { margin-top: 20px; }
+    .number-item {
+      background: white; margin: 6px 0; padding: 10px; border-radius: 6px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1); font-size: 1rem; cursor: pointer;
+    }
+    .modal {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; z-index: 999;
+    }
+    .modal-content {
+      background: white; max-width: 90%; max-height: 90%; overflow: auto; border-radius: 10px; position: relative;
+    }
+    .modal img { width: 100%; border-radius: 10px; }
+    .close-btn {
+      position: absolute; top: 8px; right: 8px; background: red; color: white;
+      border: none; padding: 5px 10px; border-radius: 20px; cursor: pointer; font-size: 0.9rem;
+    }
+    #copyBtn {
+      background: #007bff; color: white; border: none; padding: 10px 20px;
+      font-size: 1rem; border-radius: 5px; display: block; max-width: 300px;
+      margin: 15px auto 0 auto; cursor: pointer;
+    }
+    #toast {
+      visibility: hidden; min-width: 120px; background-color: #333; color: #fff;
+      text-align: center; border-radius: 6px; padding: 10px; position: fixed;
+      z-index: 9999; bottom: 30px; left: 50%; transform: translateX(-50%);
+      font-size: 14px; opacity: 0; transition: opacity 0.3s ease;
+    }
+  </style>
+</head>
+<body>
+  <h2>📸 Upload Image(s) to Detect Numbers</h2>
+  <input type="file" id="imageInput" accept="image/*" multiple />
+  <div id="output">⏳ Waiting for upload...</div>
+
+  <!-- ✅ Progress Text Added Below -->
+  <div id="progressText" style="text-align:center; font-weight:bold; margin-top:10px;"></div>
+
+  <button id="copyBtn" style="display: none;">📋 Copy All Numbers</button>
+
+  <!-- Modal -->
+  <div class="modal" id="modal">
+    <div class="modal-content">
+      <button class="close-btn" onclick="modal.style.display='none'">✖ Cancel</button>
+      <img id="modalImage" src="" alt="Preview" />
+    </div>
+  </div>
+
+  <div id="toast">Copied!</div>
+  <canvas id="canvas" style="display: none;"></canvas>
+
+<script>
+  const input = document.getElementById("imageInput");
+  const output = document.getElementById("output");
+  const canvas = document.getElementById("canvas");
+  const ctx = canvas.getContext("2d");
+  const copyBtn = document.getElementById("copyBtn");
+  const modal = document.getElementById("modal");
+  const modalImage = document.getElementById("modalImage");
+  const toast = document.getElementById("toast");
+
+  // ✅ New Progress Element
+  const progressText = document.getElementById("progressText");
+
+  const detectedList = [];
+
+  input.addEventListener("change", async (event) => {
+    output.innerHTML = "⏳ Processing...";
+    detectedList.length = 0;
+    const files = Array.from(event.target.files);
+
+    const worker = await Tesseract.createWorker("eng", 1);
+    await worker.setParameters({
+      tessedit_char_whitelist: '0123456789'
+    });
+
+    let current = 0;
+
+    for (const file of files) {
+      current++;
+      progressText.innerText = `📄 Processing ${current} of ${files.length}`;
+
+      const img = new Image();
+      const imgURL = URL.createObjectURL(file);
+
+      const result = await new Promise((resolve) => {
+        img.onload = async () => {
+          const scale = Math.min(800 / img.width, 1);
+          const resizedWidth = img.width * scale;
+          const resizedHeight = img.height * scale;
+
+          const cropY = img.height * 0.4;
+          const cropHeight = img.height * 0.6;
+
+          canvas.width = resizedWidth;
+          canvas.height = cropHeight * scale;
+
+          ctx.drawImage(
+            img,
+            0, cropY,
+            img.width, cropHeight,
+            0, 0,
+            resizedWidth, cropHeight * scale
+          );
+
+          const dataURL = canvas.toDataURL("image/png");
+          const { data: { text } } = await worker.recognize(dataURL);
+          const numbers = text.match(/\b[6-9]\d{9}\b/g);
+          detectedList.push({ number: numbers ? numbers.join("\n") : "❌ Not found", image: imgURL });
+          renderOutput();
+          resolve();
+        };
+        img.src = imgURL;
+      });
+    }
+
+    await worker.terminate();
+    progressText.innerText = "✅ Done!";
+  });
+
+  function renderOutput() {
+    output.innerHTML = "";
+    const allNumbers = [];
+
+    detectedList.forEach((item) => {
+      const div = document.createElement("div");
+      div.className = "number-item";
+      div.textContent = item.number;
+      div.onclick = () => {
+        modal.style.display = "flex";
+        modalImage.src = item.image;
+      };
+      output.appendChild(div);
+      if (item.number !== "❌ Not found") {
+        allNumbers.push(...item.number.split("\n"));
+      }
+    });
+
+    if (allNumbers.length) {
+      copyBtn.style.display = "block";
+      copyBtn.onclick = () => {
+        navigator.clipboard.writeText(allNumbers.join("\n")).then(() => showToast("✅ Numbers copied!"));
+      };
+    } else {
+      copyBtn.style.display = "none";
+    }
+  }
+
+  function showToast(message) {
+    toast.textContent = message;
+    toast.style.visibility = "visible";
+    toast.style.opacity = 1;
+    setTimeout(() => {
+      toast.style.opacity = 0;
+      toast.style.visibility = "hidden";
+    }, 2000);
+  }
+</script>
+
+</body>
+</html>
